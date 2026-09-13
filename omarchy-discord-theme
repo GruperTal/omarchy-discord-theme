@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+"""Generate Discord web colours from the active Omarchy theme.
+
+Writes theme.json into the unpacked Chrome extension, which re-reads it live.
+Discord builds its ~1000 semantic colours from primitive ramps (--neutral-82-hsl,
+--blurple-50-hsl, ...). The extension reads each step's lightness from Discord's CSS
+and asks this file's output what to put there:
+  grays: Discord lightness (0..100, 0.1 steps) -> Omarchy colour, anchored so the
+         Darker (or Light) Discord theme lands exactly on Omarchy's palette
+  hues:  colour ramps keep Discord's lightness but take the Omarchy hue/saturation
+  flats: translucent overlay ramps become one Omarchy colour
+"""
+import colorsys
+import json
+import os
+import sys
+import tomllib
+from pathlib import Path
+
+SRC = Path.home() / ".local/state/omarchy/current/theme/colors.toml"
+OUT = Path.home() / ".local/share/omarchy-discord-theme/extension/theme.json"
+
+GRAYS = ["neutral", "plum", "primary"]
+HUES = {
+    "blurple": "accent", "brand": "accent", "pink": "magenta",
+    "red-new": "red", "red": "red", "orange-new": "orange", "orange": "orange",
+    "yellow-new": "yellow", "yellow": "yellow", "green-new": "green", "green": "green",
+    "blue-new": "blue", "blue": "blue", "teal-new": "cyan", "teal": "cyan",
+}
+FLATS = {
+    "opacity": "muted", "opacity-blurple": "accent", "opacity-pink": "magenta", "opacity-red": "red",
+    "opacity-orange": "orange", "opacity-yellow": "yellow", "opacity-green": "green",
+    "opacity-blue": "blue", "opacity-teal": "cyan",
+}
+
+
+def rgb(h):
+    h = h.lstrip("#")
+    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def mix(a, b, t):
+    return tuple(round(x + (y - x) * t) for x, y in zip(a, b))
+
+
+def luminance(c):
+    ch = [v / 255 for v in c]
+    ch = [v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4 for v in ch]
+    return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2]
+
+
+def contrast(a, b):
+    la, lb = sorted((luminance(a), luminance(b)), reverse=True)
+    return (la + 0.05) / (lb + 0.05)
+
+
+def fit(c, against, toward, ratio=4.5):
+    """Move c toward `toward` just far enough to reach `ratio` contrast with `against`."""
+    for i in range(21):
+        out = mix(c, toward, i / 20)
+        if contrast(out, against) >= ratio:
+            return out
+    return toward
+
+
+def hsl(c):
+    h, l, s = colorsys.rgb_to_hls(*(v / 255 for v in c))
+    return h * 360, s * 100, l * 100
+
+
+def ramp(anchors, x):
+    for (x0, c0), (x1, c1) in zip(anchors, anchors[1:]):
+        if x <= x1:
+            return mix(c0, c1, 0 if x1 == x0 else (x - x0) / (x1 - x0))
+    return anchors[-1][1]
+
+
+def build(t):
+    c = {k: rgb(v) for k, v in t.items() if isinstance(v, str) and v.startswith("#")}
+    bg, fg = c["background"], c["foreground"]
+    dbg, lbg = c["dark_background"], c["lighter_background"]
+    darker_bg = c.get("darker_background", dbg)
+    bright_fg = c.get("bright_foreground", fg)
+    muted = fit(c["muted"], bg, fg)
+    dfg = fit(c.get("dark_foreground", fg), bg, fg)
+    c.setdefault("orange", mix(c["red"], c["yellow"], 0.5))
+    mode = t.get("mode", "dark")
+
+    # Anchor lightnesses are the neutral steps Discord's Darker / Light themes use for each role.
+    if mode == "light":
+        anchors = [
+            (0, mix(fg, (0, 0, 0), 0.5)), (16.667, bright_fg),  # text-strong
+            (19.216, fg), (36.863, dfg), (44.314, muted),        # text-default, subtle, muted
+            (95.49, darker_bg), (98.431, dbg), (100, bg),        # base-lowest, base-low, chat/surfaces
+        ]
+    else:
+        anchors = [
+            (0, mix(darker_bg, (0, 0, 0), 0.5)), (7.451, darker_bg),  # base-lowest
+            (10.98, dbg), (13.333, bg), (14.314, bg),                  # base-lower, base-low, chat
+            (15.098, mix(bg, lbg, 0.5)), (18.431, lbg),                # surface-high, surface-highest
+            (60.392, muted), (68.431, dfg),                            # text-muted, text-subtle
+            (94.118, fg), (98.431, bright_fg), (100, bright_fg),       # text-default, text-strong
+        ]
+
+    fmt = lambda h, s, l: f"{h:.1f} {s:.1f}% {l:.1f}%"
+    return {
+        "scheme": mode,
+        "grayFamilies": GRAYS,
+        "gray": [fmt(*hsl(ramp(anchors, i / 10))) for i in range(1001)],
+        "hues": {fam: "%.1f %.1f%%" % hsl(c[key])[:2] for fam, key in HUES.items()},
+        "flats": {fam: fmt(*hsl(c[key] if key != "muted" else muted)) for fam, key in FLATS.items()},
+    }
+
+
+def main():
+    with open(SRC, "rb") as f:
+        data = json.dumps(build(tomllib.load(f)))
+    OUT.parent.mkdir(parents=True, exist_ok=True)
+    tmp = OUT.with_suffix(".tmp")
+    tmp.write_text(data)
+    os.replace(tmp, OUT)  # atomic, so Chrome never serves a half-written file
+
+
+if __name__ == "__main__":
+    sys.exit(main())

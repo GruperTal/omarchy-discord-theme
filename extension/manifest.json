@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Omarchy Discord Theme",
+  "version": "1.0.0",
+  "description": "Paints Discord web with the active Omarchy theme, live.",
+  "content_scripts": [
+    {
+      "matches": ["https://discord.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["theme.json"],
+      "matches": ["https://discord.com/*"]
+    }
+  ]
+}
