@@ -24,7 +24,7 @@ In Discord → User Settings → Appearance pick **Darker** for dark Omarchy the
 
 Discord builds its ~1000 semantic colours out of primitive ramps like `--neutral-82-hsl` or `--blurple-50-hsl`.
 
-- **`omarchy-discord-theme`** reads `~/.local/state/omarchy/current/theme/colors.toml` and writes `theme.json` into the extension folder:
+- **`omarchy-discord-theme`** reads the active theme's palette through Omarchy's own `omarchy-theme-color` (so third-party themes that only define `color0`–`color15` or short names like `bg`/`fg` work too) and writes `theme.json` into the extension folder:
   - a lightness → colour table for the gray ramps, anchored so Discord's backgrounds land on Omarchy's backgrounds and its text on Omarchy's foreground (muted text nudged to 4.5:1 contrast)
   - an Omarchy hue for each colour ramp (blurple → accent, red → red, …), keeping Discord's own lightness steps
 - **The extension** runs on `discord.com` only. It reads every ramp step's lightness from Discord's CSS and overrides it from `theme.json`. It re-reads `theme.json` every 2 seconds; unpacked extensions serve files straight from disk, so a theme switch shows up without reloading anything. It has no permissions and makes no network requests.

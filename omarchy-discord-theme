@@ -13,12 +13,13 @@ and asks this file's output what to put there:
 import colorsys
 import json
 import os
+import re
+import subprocess
 import sys
-import tomllib
 from pathlib import Path
 
-SRC = Path.home() / ".local/state/omarchy/current/theme/colors.toml"
 OUT = Path.home() / ".local/share/omarchy-discord-theme/extension/theme.json"
+HEX = re.compile(r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})")
 
 GRAYS = ["neutral", "plum", "primary"]
 HUES = {
@@ -34,8 +35,21 @@ FLATS = {
 }
 
 
+def palette(colors_file=None):
+    """The active theme's palette as Omarchy resolves it for its own templates.
+
+    Third-party themes often only define color0..color15 or short names (bg, fg);
+    omarchy-theme-color maps those and derives missing shades and the mode.
+    """
+    cmd = ["omarchy-theme-color", "--all"] + (["--file", str(colors_file)] if colors_file else [])
+    out = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
+    return dict(line.split("\t", 1) for line in out.splitlines() if "\t" in line)
+
+
 def rgb(h):
     h = h.lstrip("#")
+    if len(h) == 3:
+        h = "".join(ch * 2 for ch in h)
     return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
 
 
@@ -76,15 +90,14 @@ def ramp(anchors, x):
 
 
 def build(t):
-    c = {k: rgb(v) for k, v in t.items() if isinstance(v, str) and v.startswith("#")}
+    c = {k: rgb(v) for k, v in t.items() if HEX.fullmatch(v)}
+    c.setdefault("accent", c["blue"])  # Omarchy's shell falls back to color4 (blue) too
     bg, fg = c["background"], c["foreground"]
-    dbg, lbg = c["dark_background"], c["lighter_background"]
-    darker_bg = c.get("darker_background", dbg)
-    bright_fg = c.get("bright_foreground", fg)
+    dbg, darker_bg, lbg = c["dark_background"], c["darker_background"], c["lighter_background"]
+    bright_fg = c["bright_foreground"]
     muted = fit(c["muted"], bg, fg)
-    dfg = fit(c.get("dark_foreground", fg), bg, fg)
-    c.setdefault("orange", mix(c["red"], c["yellow"], 0.5))
-    mode = t.get("mode", "dark")
+    dfg = fit(c["dark_foreground"], bg, fg)
+    mode = t["mode"]
 
     # Anchor lightnesses are the neutral steps Discord's Darker / Light themes use for each role.
     if mode == "light":
@@ -113,8 +126,7 @@ def build(t):
 
 
 def main():
-    with open(SRC, "rb") as f:
-        data = json.dumps(build(tomllib.load(f)))
+    data = json.dumps(build(palette()))
     OUT.parent.mkdir(parents=True, exist_ok=True)
     tmp = OUT.with_suffix(".tmp")
     tmp.write_text(data)
